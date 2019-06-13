@@ -16,7 +16,7 @@ import core.stdc.stdio;
 import core.checkedint;
 
 import dmd.arraytypes;
-import dmd.gluelayer;
+import dmd.gluelayer : Symbol;
 import dmd.declaration;
 import dmd.dscope;
 import dmd.dstruct;
@@ -30,10 +30,8 @@ import dmd.globals;
 import dmd.id;
 import dmd.identifier;
 import dmd.mtype;
-import dmd.semantic2;
-import dmd.semantic3;
 import dmd.tokens;
-import dmd.typesem;
+import dmd.typesem : defaultInit;
 import dmd.visitor;
 
 enum Sizeok : int
@@ -623,7 +621,7 @@ extern (C++) abstract class AggregateDeclaration : ScopeDsymbol
     }
 
     // is aggregate deprecated?
-    override final bool isDeprecated()
+    override final bool isDeprecated() const
     {
         return isdeprecated;
     }
@@ -632,7 +630,7 @@ extern (C++) abstract class AggregateDeclaration : ScopeDsymbol
      * Returns true if there's an extra member which is the 'this'
      * pointer to the enclosing context (enclosing aggregate or function)
      */
-    final bool isNested()
+    final bool isNested() const
     {
         return enclosing !is null;
     }

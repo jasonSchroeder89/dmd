@@ -69,7 +69,7 @@ extern(C++) const(char)* toCppMangleItanium(Dsymbol s)
     OutBuffer buf;
     scope CppMangleVisitor v = new CppMangleVisitor(&buf, s.loc);
     v.mangleOf(s);
-    return buf.extractString();
+    return buf.extractChars();
 }
 
 ///
@@ -80,7 +80,7 @@ extern(C++) const(char)* cppTypeInfoMangleItanium(Dsymbol s)
     buf.writestring("_ZTI");    // "TI" means typeinfo structure
     scope CppMangleVisitor v = new CppMangleVisitor(&buf, s.loc);
     v.cpp_mangle_name(s, false);
-    return buf.extractString();
+    return buf.extractChars();
 }
 
 /******************************
@@ -824,7 +824,7 @@ private final class CppMangleVisitor : Visitor
         {
             if (!is_temp_arg_ref)
             {
-                buf.writestring(d.ident.toChars());
+                buf.writestring(d.ident.toString());
             }
             else
             {
@@ -861,8 +861,8 @@ private final class CppMangleVisitor : Visitor
             {
                 this.mangleNestedFuncPrefix(tf, p);
 
-                if (d.isCtorDeclaration())
-                    buf.writestring("C1");
+                if (auto ctor = d.isCtorDeclaration())
+                    buf.writestring(ctor.isCpCtor ? "C2" : "C1");
                 else if (d.isPrimaryDtor())
                     buf.writestring("D1");
                 else if (d.ident && d.ident == Id.assign)
@@ -1061,7 +1061,12 @@ private final class CppMangleVisitor : Visitor
                 fatal();
             }
             auto prev = this.context.push({
-                    auto tf = cast(TypeFunction)this.context.res.asFuncDecl().type;
+                    TypeFunction tf;
+                    if (isDsymbol(this.context.res))
+                        tf = cast(TypeFunction)this.context.res.asFuncDecl().type;
+                    else
+                        tf = this.context.res.asType().isTypeFunction();
+                    assert(tf);
                     return (*tf.parameterList.parameters)[n].type;
                 }());
             scope (exit) this.context.pop(prev);
@@ -1334,8 +1339,8 @@ extern(C++):
             case Tfloat80:               c = 'e';       break;
             case Tbool:                  c = 'b';       break;
             case Tchar:                  c = 'c';       break;
-            case Twchar:                 c = 't';       break;  // unsigned short (perhaps use 'Ds' ?
-            case Tdchar:                 c = 'w';       break;  // wchar_t (UTF-32) (perhaps use 'Di' ?
+            case Twchar:        p = 'D'; c = 's';       break;  // since C++11
+            case Tdchar:        p = 'D'; c = 'i';       break;  // since C++11
             case Timaginary32:  p = 'G'; c = 'f';       break;  // 'G' means imaginary
             case Timaginary64:  p = 'G'; c = 'd';       break;
             case Timaginary80:  p = 'G'; c = 'e';       break;

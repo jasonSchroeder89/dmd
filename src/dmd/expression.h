@@ -317,6 +317,7 @@ public:
     Dsymbol *s;
     bool hasOverloads;
 
+    Expression *syntaxCopy();
     bool isLvalue();
     Expression *toLvalue(Scope *sc, Expression *e);
     void accept(Visitor *v) { v->visit(this); }
@@ -396,6 +397,7 @@ public:
      */
     Expressions *exps;
 
+    static TupleExp *create(Loc loc, Expressions *exps);
     TupleExp *toTupleExp();
     Expression *syntaxCopy();
     bool equals(RootObject *o);

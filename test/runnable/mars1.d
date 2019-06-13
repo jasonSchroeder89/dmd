@@ -1902,6 +1902,41 @@ void test18794()
 
 ////////////////////////////////////////////////////////////////////////
 
+const(char)* fastpar(string s)
+{
+    return s.ptr + s.length;
+}
+
+void testfastpar()
+{
+    string s = "abcde";
+    auto p = fastpar(s);
+    assert(*p == 0);
+}
+
+////////////////////////////////////////////////////////////////////////
+
+
+T testfooa(T)(T value)
+{
+    return 10 - (value * 57); // gets rewritten into (value*-57)+10
+}
+
+T testfoob(T)(T value)
+{
+    return (value * -57) + 10;
+}
+
+void testNegConst()
+{
+    assert(testfooa(1) == -47);
+    assert(testfoob(1) == -47);
+    assert(testfooa(1.0) == -47);
+    assert(testfoob(1.0) == -47);
+}
+
+////////////////////////////////////////////////////////////////////////
+
 int main()
 {
     testgoto();
@@ -1969,6 +2004,8 @@ int main()
     test18730();
     test19497();
     test18794();
+    testfastpar();
+    testNegConst();
 
     printf("Success\n");
     return 0;

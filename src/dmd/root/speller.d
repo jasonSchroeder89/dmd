@@ -43,19 +43,18 @@ private bool combineSpellerResult(T)(ref T p, ref int cost, T np, int ncost)
     return false;
 }
 
-private auto spellerY(alias dg)(const(char)* seed, size_t seedlen, size_t index, ref int cost)
+private auto spellerY(alias dg)(const(char)[] seed, size_t index, ref int cost)
 {
-    if (!seedlen)
+    if (!seed.length)
         return null;
-    assert(seed[seedlen] == 0);
     char[30] tmp;
-    char* buf;
-    if (seedlen <= tmp.sizeof - 2)
-        buf = tmp.ptr;
+    char[] buf;
+    if (seed.length <= tmp.sizeof - 1)
+        buf = tmp;
     else
     {
-        buf = cast(char*)alloca(seedlen + 2); // leave space for extra char
-        if (!buf)
+        buf = (cast(char*)alloca(seed.length + 1))[0 .. seed.length + 1]; // leave space for extra char
+        if (!buf.ptr)
             return null; // no matches
     }
     buf[0 .. index] = seed[0 .. index];
@@ -63,67 +62,62 @@ private auto spellerY(alias dg)(const(char)* seed, size_t seedlen, size_t index,
     searchFunctionType!dg p = null;
     int ncost;
     /* Delete at seed[index] */
-    if (index < seedlen)
+    if (index < seed.length)
     {
-        buf[index .. seedlen] = seed[index + 1 .. seedlen + 1];
-        assert(buf[seedlen - 1] == 0);
-        auto np = dg(buf[0 .. seedlen - 1], ncost);
+        buf[index .. seed.length - 1] = seed[index + 1 .. $];
+        auto np = dg(buf[0 .. seed.length - 1], ncost);
         if (combineSpellerResult(p, cost, np, ncost))
             return p;
     }
     /* Substitutions */
-    if (index < seedlen)
+    if (index < seed.length)
     {
-        buf[0 .. seedlen + 1] = seed[0 .. seedlen + 1];
+        buf[0 .. seed.length] = seed;
         foreach (s; idchars)
         {
             buf[index] = s;
             //printf("sub buf = '%s'\n", buf);
-            auto np = dg(buf[0 .. seedlen], ncost);
+            auto np = dg(buf[0 .. seed.length], ncost);
             if (combineSpellerResult(p, cost, np, ncost))
                 return p;
         }
-        assert(buf[seedlen] == 0);
     }
     /* Insertions */
-    buf[index + 1 .. seedlen + 2] = seed[index .. seedlen + 1];
+    buf[index + 1 .. seed.length + 1] = seed[index .. $];
     foreach (s; idchars)
     {
         buf[index] = s;
         //printf("ins buf = '%s'\n", buf);
-        auto np = dg(buf[0 .. seedlen + 1], ncost);
+        auto np = dg(buf[0 .. seed.length + 1], ncost);
         if (combineSpellerResult(p, cost, np, ncost))
             return p;
     }
-    assert(buf[seedlen + 1] == 0);
     return p; // return "best" result
 }
 
-private auto spellerX(alias dg)(const(char)* seed, size_t seedlen, bool flag)
+private auto spellerX(alias dg)(const(char)[] seed, bool flag)
 {
-    if (!seedlen)
+    if (!seed.length)
         return null;
     char[30] tmp;
-    char* buf;
-    if (seedlen <= tmp.sizeof - 2)
-        buf = tmp.ptr;
+    char[] buf;
+    if (seed.length <= tmp.sizeof - 1)
+        buf = tmp;
     else
     {
-        buf = cast(char*)alloca(seedlen + 2); // leave space for extra char
-        if (!buf)
-            return null; // no matches
+        buf = (cast(char*)alloca(seed.length + 1))[0 .. seed.length + 1]; // leave space for extra char
     }
     int cost = int.max, ncost;
     searchFunctionType!dg p = null, np;
     /* Deletions */
-    buf[0 .. seedlen] = seed[1 .. seedlen + 1];
-    for (size_t i = 0; i < seedlen; i++)
+    buf[0 .. seed.length - 1] = seed[1 .. $];
+    for (size_t i = 0; i < seed.length; i++)
     {
         //printf("del buf = '%s'\n", buf);
         if (flag)
-            np = spellerY!dg(buf, seedlen - 1, i, ncost);
+            np = spellerY!dg(buf[0 .. seed.length - 1], i, ncost);
         else
-            np = dg(buf[0 .. seedlen - 1], ncost);
+            np = dg(buf[0 .. seed.length - 1], ncost);
         if (combineSpellerResult(p, cost, np, ncost))
             return p;
         buf[i] = seed[i];
@@ -131,51 +125,52 @@ private auto spellerX(alias dg)(const(char)* seed, size_t seedlen, bool flag)
     /* Transpositions */
     if (!flag)
     {
-        buf[0 .. seedlen + 1] = seed[0 .. seedlen + 1];
-        for (size_t i = 0; i + 1 < seedlen; i++)
+        buf[0 .. seed.length] = seed;
+        for (size_t i = 0; i + 1 < seed.length; i++)
         {
             // swap [i] and [i + 1]
             buf[i] = seed[i + 1];
             buf[i + 1] = seed[i];
             //printf("tra buf = '%s'\n", buf);
-            if (combineSpellerResult(p, cost, dg(buf[0 .. seedlen], ncost), ncost))
+            if (combineSpellerResult(p, cost, dg(buf[0 .. seed.length], ncost), ncost))
                 return p;
             buf[i] = seed[i];
         }
     }
     /* Substitutions */
-    buf[0 .. seedlen + 1] = seed[0 .. seedlen + 1];
-    for (size_t i = 0; i < seedlen; i++)
+    buf[0 .. seed.length] = seed;
+    for (size_t i = 0; i < seed.length; i++)
     {
         foreach (s; idchars)
         {
             buf[i] = s;
             //printf("sub buf = '%s'\n", buf);
             if (flag)
-                np = spellerY!dg(buf, seedlen, i + 1, ncost);
+                np = spellerY!dg(buf[0 .. seed.length], i + 1, ncost);
             else
-                np = dg(buf[0 .. seedlen], ncost);
+                np = dg(buf[0 .. seed.length], ncost);
             if (combineSpellerResult(p, cost, np, ncost))
                 return p;
         }
         buf[i] = seed[i];
     }
     /* Insertions */
-    buf[1 .. seedlen + 2] = seed[0 .. seedlen + 1];
-    for (size_t i = 0; i <= seedlen; i++) // yes, do seedlen+1 iterations
+    buf[1 .. seed.length + 1] = seed;
+    for (size_t i = 0; i <= seed.length; i++) // yes, do seed.length+1 iterations
     {
         foreach (s; idchars)
         {
             buf[i] = s;
             //printf("ins buf = '%s'\n", buf);
             if (flag)
-                np = spellerY!dg(buf, seedlen + 1, i + 1, ncost);
+                np = spellerY!dg(buf[0 .. seed.length + 1], i + 1, ncost);
             else
-                np = dg(buf[0 .. seedlen + 1], ncost);
+                np = dg(buf[0 .. seed.length + 1], ncost);
             if (combineSpellerResult(p, cost, np, ncost))
                 return p;
         }
-        buf[i] = seed[i]; // going past end of seed[] is ok, as we hit the 0
+        if (i < seed.length)
+            buf[i] = seed[i];
     }
     return p; // return "best" result
 }
@@ -191,14 +186,13 @@ private auto spellerX(alias dg)(const(char)* seed, size_t seedlen, bool flag)
  *      null = no correct spellings found, otherwise
  *      the value returned by dg() for first possible correct spelling
  */
-auto speller(alias dg)(const(char)* seed)
+auto speller(alias dg)(const(char)[] seed)
 if (isSearchFunction!dg)
 {
-    size_t seedlen = strlen(seed);
-    size_t maxdist = seedlen < 4 ? seedlen / 2 : 2;
+    size_t maxdist = seed.length < 4 ? seed.length / 2 : 2;
     for (int distance = 0; distance < maxdist; distance++)
     {
-        auto p = spellerX!dg(seed, seedlen, distance > 0);
+        auto p = spellerX!dg(seed, distance > 0);
         if (p)
             return p;
         //      if (seedlen > 10)
@@ -229,7 +223,6 @@ unittest
         ["hello", "ehlxxlo", "n"],
         ["hello", "heaao", "y"],
         ["_123456789_123456789_123456789_123456789", "_123456789_123456789_123456789_12345678", "y"],
-        [null, null, null]
     ];
     //printf("unittest_speller()\n");
 
@@ -246,17 +239,17 @@ unittest
     }
 
     dgarg = "hell";
-    auto p = speller!speller_test(cast(const(char)*)"hello");
+    auto p = speller!speller_test("hello");
     assert(p !is null);
-    for (int i = 0; cases[i][0]; i++)
+    foreach (testCase; cases)
     {
         //printf("case [%d]\n", i);
-        dgarg = cases[i][1];
-        auto p2 = speller!speller_test(cases[i][0].ptr);
+        dgarg = testCase[1];
+        auto p2 = speller!speller_test(testCase[0]);
         if (p2)
-            assert(cases[i][2][0] == 'y');
+            assert(testCase[2][0] == 'y');
         else
-            assert(cases[i][2][0] == 'n');
+            assert(testCase[2][0] == 'n');
     }
     //printf("unittest_speller() success\n");
 }

@@ -922,11 +922,10 @@ Expression op_overload(Expression e, Scope* sc, TOK* pop = null)
                 args2[0] = e.e2;
                 expandTuples(&args2);
                 argsset = 1;
-                Match m;
-                m.last = MATCH.nomatch;
+                MatchAccumulator m;
                 if (s)
                 {
-                    functionResolve(&m, s, e.loc, sc, tiargs, e.e1.type, &args2);
+                    functionResolve(m, s, e.loc, sc, tiargs, e.e1.type, &args2);
                     if (m.lastf && (m.lastf.errors || m.lastf.semantic3Errors))
                     {
                         result = new ErrorExp();
@@ -936,7 +935,7 @@ Expression op_overload(Expression e, Scope* sc, TOK* pop = null)
                 FuncDeclaration lastf = m.lastf;
                 if (s_r)
                 {
-                    functionResolve(&m, s_r, e.loc, sc, tiargs, e.e2.type, &args1);
+                    functionResolve(m, s_r, e.loc, sc, tiargs, e.e2.type, &args1);
                     if (m.lastf && (m.lastf.errors || m.lastf.semantic3Errors))
                     {
                         result = new ErrorExp();
@@ -950,9 +949,9 @@ Expression op_overload(Expression e, Scope* sc, TOK* pop = null)
                 }
                 else if (m.last <= MATCH.nomatch)
                 {
-                    m.lastf = m.anyf;
                     if (tiargs)
                         goto L1;
+                    m.lastf = null;
                 }
                 if (e.op == TOK.plusPlus || e.op == TOK.minusMinus)
                 {
@@ -1008,11 +1007,10 @@ Expression op_overload(Expression e, Scope* sc, TOK* pop = null)
                             args2[0] = e.e2;
                             expandTuples(&args2);
                         }
-                        Match m;
-                        m.last = MATCH.nomatch;
+                        MatchAccumulator m;
                         if (s_r)
                         {
-                            functionResolve(&m, s_r, e.loc, sc, tiargs, e.e1.type, &args2);
+                            functionResolve(m, s_r, e.loc, sc, tiargs, e.e1.type, &args2);
                             if (m.lastf && (m.lastf.errors || m.lastf.semantic3Errors))
                             {
                                 result = new ErrorExp();
@@ -1022,7 +1020,7 @@ Expression op_overload(Expression e, Scope* sc, TOK* pop = null)
                         FuncDeclaration lastf = m.lastf;
                         if (s)
                         {
-                            functionResolve(&m, s, e.loc, sc, tiargs, e.e2.type, &args1);
+                            functionResolve(m, s, e.loc, sc, tiargs, e.e2.type, &args1);
                             if (m.lastf && (m.lastf.errors || m.lastf.semantic3Errors))
                             {
                                 result = new ErrorExp();
@@ -1036,8 +1034,9 @@ Expression op_overload(Expression e, Scope* sc, TOK* pop = null)
                         }
                         else if (m.last <= MATCH.nomatch)
                         {
-                            m.lastf = m.anyf;
+                            m.lastf = null;
                         }
+
                         if (lastf && m.lastf == lastf || !s && m.last <= MATCH.nomatch)
                         {
                             // Rewrite (e1 op e2) as e1.opfunc_r(e2)
@@ -1517,11 +1516,10 @@ Expression op_overload(Expression e, Scope* sc, TOK* pop = null)
                 args2.setDim(1);
                 args2[0] = e.e2;
                 expandTuples(&args2);
-                Match m;
-                m.last = MATCH.nomatch;
+                MatchAccumulator m;
                 if (s)
                 {
-                    functionResolve(&m, s, e.loc, sc, tiargs, e.e1.type, &args2);
+                    functionResolve(m, s, e.loc, sc, tiargs, e.e1.type, &args2);
                     if (m.lastf && (m.lastf.errors || m.lastf.semantic3Errors))
                     {
                         result = new ErrorExp();
@@ -1535,9 +1533,9 @@ Expression op_overload(Expression e, Scope* sc, TOK* pop = null)
                 }
                 else if (m.last <= MATCH.nomatch)
                 {
-                    m.lastf = m.anyf;
                     if (tiargs)
                         goto L1;
+                    m.lastf = null;
                 }
                 // Rewrite (e1 op e2) as e1.opOpAssign(e2)
                 result = build_overload(e.loc, sc, e.e1, e.e2, m.lastf ? m.lastf : s);
@@ -1545,7 +1543,7 @@ Expression op_overload(Expression e, Scope* sc, TOK* pop = null)
             }
         L1:
             result = checkAliasThisForLhs(ad1, sc, e);
-            if (result)
+            if (result || !s) // no point in trying Rhs alias-this if there's no overload of any kind in lhs
                 return;
 
             result = checkAliasThisForRhs(isAggregate(e.e2.type), sc, e);
@@ -1593,8 +1591,7 @@ private Expression compare_overload(BinExp e, Scope* sc, Identifier id, TOK* pop
         Expressions args2 = Expressions(1);
         args2[0] = e.e2;
         expandTuples(&args2);
-        Match m;
-        m.last = MATCH.nomatch;
+        MatchAccumulator m;
         if (0 && s && s_r)
         {
             printf("s  : %s\n", s.toPrettyChars());
@@ -1602,7 +1599,7 @@ private Expression compare_overload(BinExp e, Scope* sc, Identifier id, TOK* pop
         }
         if (s)
         {
-            functionResolve(&m, s, e.loc, sc, tiargs, e.e1.type, &args2);
+            functionResolve(m, s, e.loc, sc, tiargs, e.e1.type, &args2);
             if (m.lastf && (m.lastf.errors || m.lastf.semantic3Errors))
                 return new ErrorExp();
         }
@@ -1610,7 +1607,7 @@ private Expression compare_overload(BinExp e, Scope* sc, Identifier id, TOK* pop
         int count = m.count;
         if (s_r)
         {
-            functionResolve(&m, s_r, e.loc, sc, tiargs, e.e2.type, &args1);
+            functionResolve(m, s_r, e.loc, sc, tiargs, e.e2.type, &args1);
             if (m.lastf && (m.lastf.errors || m.lastf.semantic3Errors))
                 return new ErrorExp();
         }
@@ -1635,7 +1632,7 @@ private Expression compare_overload(BinExp e, Scope* sc, Identifier id, TOK* pop
         }
         else if (m.last <= MATCH.nomatch)
         {
-            m.lastf = m.anyf;
+            m.lastf = null;
         }
         Expression result;
         if (lastf && m.lastf == lastf || !s_r && m.last <= MATCH.nomatch)

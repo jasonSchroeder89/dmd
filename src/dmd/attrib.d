@@ -19,18 +19,18 @@ import dmd.declaration;
 import dmd.dmodule;
 import dmd.dscope;
 import dmd.dsymbol;
-import dmd.dsymbolsem;
+import dmd.dsymbolsem : dsymbolSemantic;
 import dmd.expression;
-import dmd.expressionsem;
+import dmd.expressionsem : arrayExpressionSemantic;
 import dmd.func;
 import dmd.globals;
-import dmd.hdrgen;
+import dmd.hdrgen : protectionToBuffer;
 import dmd.id;
 import dmd.identifier;
 import dmd.mtype;
-import dmd.objc;
+import dmd.objc; // for objc.addSymbols
 import dmd.root.outbuffer;
-import dmd.target;
+import dmd.target; // for target.systemLinkage
 import dmd.tokens;
 import dmd.visitor;
 
@@ -396,6 +396,11 @@ extern (C++) final class LinkDeclaration : AttribDeclaration
 
     override const(char)* toChars() const
     {
+        return toString().ptr;
+    }
+
+    extern(D) override const(char)[] toString() const
+    {
         return "extern ()";
     }
 
@@ -431,6 +436,11 @@ extern (C++) final class CPPMangleDeclaration : AttribDeclaration
     }
 
     override const(char)* toChars() const
+    {
+        return toString().ptr;
+    }
+
+    extern(D) override const(char)[] toString() const
     {
         return "extern ()";
     }
@@ -525,7 +535,7 @@ extern (C++) final class ProtDeclaration : AttribDeclaration
         assert(protection.kind > Prot.Kind.undefined);
         OutBuffer buf;
         protectionToBuffer(&buf, protection);
-        return buf.extractString();
+        return buf.extractChars();
     }
 
     override inout(ProtDeclaration) isProtDeclaration() inout
@@ -558,7 +568,8 @@ extern (C++) final class AlignDeclaration : AttribDeclaration
     {
         assert(!s);
         return new AlignDeclaration(loc,
-            ealign.syntaxCopy(), Dsymbol.arraySyntaxCopy(decl));
+            ealign ? ealign.syntaxCopy() : null,
+            Dsymbol.arraySyntaxCopy(decl));
     }
 
     override Scope* newScope(Scope* sc)
@@ -1149,6 +1160,11 @@ extern (C++) final class CompileDeclaration : AttribDeclaration
         return "mixin";
     }
 
+    override inout(CompileDeclaration) isCompileDeclaration() inout
+    {
+        return this;
+    }
+
     override void accept(Visitor v)
     {
         v.visit(this);
@@ -1210,9 +1226,9 @@ extern (C++) final class UserAttributeDeclaration : AttribDeclaration
             /* Create a new tuple that combines them
              * (do not append to left operand, as this is a copy-on-write operation)
              */
-            udas = new Expressions();
-            udas.push(new TupleExp(Loc.initial, udas1));
-            udas.push(new TupleExp(Loc.initial, udas2));
+            udas = new Expressions(2);
+            (*udas)[0] = new TupleExp(Loc.initial, udas1);
+            (*udas)[1] = new TupleExp(Loc.initial, udas2);
         }
         return udas;
     }

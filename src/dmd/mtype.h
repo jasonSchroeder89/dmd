@@ -13,6 +13,7 @@
 #include "root/rmem.h" // for d_size_t
 
 #include "arraytypes.h"
+#include "ast_node.h"
 #include "globals.h"
 #include "visitor.h"
 
@@ -94,9 +95,6 @@ enum ENUMTY
     TMAX
 };
 typedef unsigned char TY;       // ENUMTY
-
-extern int Tsize_t;
-extern int Tptrdiff_t;
 
 #define SIZE_INVALID (~(d_uns64)0)   // error return from size() functions
 
@@ -228,7 +226,7 @@ public:
     static Type *basic[TMAX];
 
     virtual const char *kind();
-    Type *copy();
+    Type *copy() const;
     virtual Type *syntaxCopy();
     bool equals(RootObject *o);
     bool equivalent(Type *t);
@@ -244,8 +242,8 @@ public:
     virtual unsigned alignsize();
     Type *trySemantic(const Loc &loc, Scope *sc);
     Type *merge2();
-    void modToBuffer(OutBuffer *buf);
-    char *modToChars();
+    void modToBuffer(OutBuffer *buf) const;
+    char *modToChars() const;
 
     virtual bool isintegral();
     virtual bool isfloating();   // real, imaginary, or complex
@@ -268,7 +266,7 @@ public:
     bool isWildConst() const   { return (mod & MODwildconst) == MODwildconst; }
     bool isSharedWild() const  { return (mod & (MODshared | MODwild)) == (MODshared | MODwild); }
     bool isNaked() const       { return mod == 0; }
-    Type *nullAttributes();
+    Type *nullAttributes() const;
     Type *constOf();
     Type *immutableOf();
     Type *mutableOf();
@@ -399,6 +397,7 @@ public:
     bool iscomplex() /*const*/;
     bool isscalar() /*const*/;
     bool isunsigned() /*const*/;
+    bool ischar() /*const*/;
     MATCH implicitConvTo(Type *to);
     bool isZeroInit(const Loc &loc) /*const*/;
 
@@ -584,6 +583,7 @@ public:
     Expressions *fargs; // function arguments
 
     int inuse;
+    bool incomplete;
 
     static TypeFunction *create(Parameters *parameters, Type *treturn, VarArg varargs, LINK linkage, StorageClass stc = 0);
     const char *kind();
@@ -759,6 +759,7 @@ public:
     bool iscomplex();
     bool isscalar();
     bool isunsigned();
+    bool ischar();
     bool isBoolean();
     bool isString();
     bool isAssignable();
@@ -842,7 +843,7 @@ public:
 
 //enum InOut { None, In, Out, InOut, Lazy };
 
-class Parameter : public RootObject
+class Parameter : public ASTNode
 {
 public:
     //enum InOut inout;
@@ -858,7 +859,7 @@ public:
     Type *isLazyArray();
     // kludge for template.isType()
     DYNCAST dyncast() const { return DYNCAST_PARAMETER; }
-    virtual void accept(Visitor *v) { v->visit(this); }
+    void accept(Visitor *v) { v->visit(this); }
 
     static size_t dim(Parameters *parameters);
     static Parameter *getNth(Parameters *parameters, d_size_t nth, d_size_t *pn = NULL);

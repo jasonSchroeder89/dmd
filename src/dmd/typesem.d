@@ -236,8 +236,8 @@ private void resolveHelper(TypeQualified mt, const ref Loc loc, Scope* sc, Dsymb
             Dsymbol sm = s.searchX(loc, sc, id, flags);
             if (sm && !(sc.flags & SCOPE.ignoresymbolvisibility) && !symbolIsVisible(sc, sm))
             {
-                .deprecation(loc, "`%s` is not visible from module `%s`", sm.toPrettyChars(), sc._module.toChars());
-                // sm = null;
+                .error(loc, "`%s` is not visible from module `%s`", sm.toPrettyChars(), sc._module.toChars());
+                sm = null;
             }
             if (global.errors != errorsave)
             {
@@ -266,6 +266,10 @@ private void resolveHelper(TypeQualified mt, const ref Loc loc, Scope* sc, Dsymb
 
             if (VarDeclaration v = s.isVarDeclaration())
             {
+                // https://issues.dlang.org/show_bug.cgi?id=19913
+                // v.type would be null if it is a forward referenced member.
+                if (v.type is null)
+                    v.dsymbolSemantic(sc);
                 if (v.storage_class & (STC.const_ | STC.immutable_ | STC.manifest) ||
                     v.type.isConst() || v.type.isImmutable())
                 {
@@ -765,7 +769,13 @@ extern(C++) Type typeSemantic(Type t, Loc loc, Scope* sc)
                  * when the bottom of element type is opaque.
                  */
             }
-            else if (tbn.isintegral() || tbn.isfloating() || tbn.ty == Tpointer || tbn.ty == Tarray || tbn.ty == Tsarray || tbn.ty == Taarray || (tbn.ty == Tstruct && ((cast(TypeStruct)tbn).sym.sizeok == Sizeok.done)) || tbn.ty == Tclass)
+            else if (tbn.isTypeBasic() ||
+                     tbn.ty == Tpointer ||
+                     tbn.ty == Tarray ||
+                     tbn.ty == Tsarray ||
+                     tbn.ty == Taarray ||
+                     (tbn.ty == Tstruct && ((cast(TypeStruct)tbn).sym.sizeok == Sizeok.done)) ||
+                     tbn.ty == Tclass)
             {
                 /* Only do this for types that don't need to have semantic()
                  * run on them for the size, since they may be forward referenced.
@@ -1343,7 +1353,9 @@ extern(C++) Type typeSemantic(Type t, Loc loc, Scope* sc)
                 if (fparam.defaultArg)
                 {
                     Expression e = fparam.defaultArg;
-                    if (fparam.storageClass & (STC.ref_ | STC.out_))
+                    const isRefOrOut = fparam.storageClass & (STC.ref_ | STC.out_);
+                    const isAuto = fparam.storageClass & (STC.auto_ | STC.autoref);
+                    if (isRefOrOut && !isAuto)
                     {
                         e = e.expressionSemantic(argsc);
                         e = resolveProperties(argsc, e);
@@ -1365,10 +1377,17 @@ extern(C++) Type typeSemantic(Type t, Loc loc, Scope* sc)
                         e = new AddrExp(e.loc, e);
                         e = e.expressionSemantic(argsc);
                     }
+                    if (isRefOrOut && (!isAuto || e.isLvalue())
+                        && !MODimplicitConv(e.type.mod, fparam.type.mod))
+                    {
+                        const(char)* errTxt = fparam.storageClass & STC.ref_ ? "ref" : "out";
+                        .error(e.loc, "expression `%s` of type `%s` is not implicitly convertible to type `%s %s` of parameter `%s`",
+                              e.toChars(), e.type.toChars(), errTxt, fparam.type.toChars(), fparam.toChars());
+                    }
                     e = e.implicitCastTo(argsc, fparam.type);
 
                     // default arg must be an lvalue
-                    if (fparam.storageClass & (STC.out_ | STC.ref_))
+                    if (isRefOrOut && !isAuto)
                         e = e.toLvalue(argsc, e);
 
                     fparam.defaultArg = e;
@@ -1410,7 +1429,7 @@ extern(C++) Type typeSemantic(Type t, Loc loc, Scope* sc)
                                 OutBuffer buf2;  stcToBuffer(&buf2, stc2);
 
                                 .error(loc, "incompatible parameter storage classes `%s` and `%s`",
-                                    buf1.peekString(), buf2.peekString());
+                                    buf1.peekChars(), buf2.peekChars());
                                 errors = true;
                                 stc = stc1 | (stc & ~(STC.ref_ | STC.out_ | STC.lazy_));
                             }
@@ -1421,11 +1440,9 @@ extern(C++) Type typeSemantic(Type t, Loc loc, Scope* sc)
                              * tuple the default argument tuple must also be expanded.
                              */
                             Expression paramDefaultArg = narg.defaultArg;
-                            if (fparam.defaultArg)
-                            {
-                                auto te = cast(TupleExp)(fparam.defaultArg);
+                            TupleExp te = fparam.defaultArg ? fparam.defaultArg.isTupleExp() : null;
+                            if (te && te.exps && te.exps.length)
                                 paramDefaultArg = (*te.exps)[j];
-                            }
 
                             (*newparams)[j] = new Parameter(
                                 stc, narg.type, narg.ident, paramDefaultArg, narg.userAttribDecl);
@@ -1447,9 +1464,9 @@ extern(C++) Type typeSemantic(Type t, Loc loc, Scope* sc)
                  */
                 if (fparam.storageClass & STC.auto_)
                 {
-                    if (mtype.fargs && i < mtype.fargs.dim && (fparam.storageClass & STC.ref_))
+                    Expression farg = mtype.fargs && i < mtype.fargs.dim ? (*mtype.fargs)[i] : fparam.defaultArg;
+                    if (farg && (fparam.storageClass & STC.ref_))
                     {
-                        Expression farg = (*mtype.fargs)[i];
                         if (farg.isLvalue())
                         {
                             // ref parameter
@@ -1457,6 +1474,14 @@ extern(C++) Type typeSemantic(Type t, Loc loc, Scope* sc)
                         else
                             fparam.storageClass &= ~STC.ref_; // value parameter
                         fparam.storageClass &= ~STC.auto_;    // https://issues.dlang.org/show_bug.cgi?id=14656
+                        fparam.storageClass |= STC.autoref;
+                    }
+                    else if (mtype.incomplete && (fparam.storageClass & STC.ref_))
+                    {
+                        // the default argument may have been temporarily removed,
+                        // see usage of `TypeFunction.incomplete`.
+                        // https://issues.dlang.org/show_bug.cgi?id=19891
+                        fparam.storageClass &= ~STC.auto_;
                         fparam.storageClass |= STC.autoref;
                     }
                     else
@@ -1651,11 +1676,18 @@ extern(C++) Type typeSemantic(Type t, Loc loc, Scope* sc)
             case TOK.variable:
                 mtype.sym = (cast(VarExp)e).var;
                 break;
+            case TOK.function_:
+                auto fe = cast(FuncExp)e;
+                mtype.sym = fe.td ? fe.td : fe.fd;
+                break;
             case TOK.dotTemplateDeclaration:
                 mtype.sym = (cast(DotTemplateExp)e).td;
                 break;
             case TOK.dSymbol:
                 mtype.sym = (cast(DsymbolExp)e).s;
+                break;
+            case TOK.template_:
+                mtype.sym = (cast(TemplateExp)e).td;
                 break;
             case TOK.scope_:
                 mtype.sym = (cast(ScopeExp)e).sds;
@@ -1670,7 +1702,11 @@ extern(C++) Type typeSemantic(Type t, Loc loc, Scope* sc)
             case TOK.type:
                 result = (cast(TypeExp)e).type;
                 break;
+            case TOK.overloadSet:
+                result = (cast(OverExp)e).type;
+                break;
             default:
+                break;
             }
         }
 
@@ -2085,7 +2121,6 @@ Expression getProperty(Type t, const ref Loc loc, Identifier ident, int flag)
         }
         else if (ident == Id.min_normal)
         {
-        Lmin_normal:
             switch (mt.ty)
             {
             case Tcomplex32:
@@ -2572,15 +2607,19 @@ void resolve(Type mt, const ref Loc loc, Scope* sc, Expression* pe, Type* pt, Ds
         //printf("TypeIdentifier::resolve(sc = %p, idents = '%s')\n", sc, mt.toChars());
         if ((mt.ident.equals(Id._super) || mt.ident.equals(Id.This)) && !hasThis(sc))
         {
-            // @@@DEPRECATED_v2.086@@@.
+            // @@@DEPRECATED_v2.091@@@.
+            // Made an error in 2.086.
+            // Eligible for removal in 2.091.
             if (mt.ident.equals(Id._super))
             {
-                deprecation(mt.loc, "Using `super` as a type is deprecated. Use `typeof(super)` instead");
+                error(mt.loc, "Using `super` as a type is obsolete. Use `typeof(super)` instead");
             }
-            // @@@DEPRECATED_v2.086@@@.
+             // @@@DEPRECATED_v2.091@@@.
+            // Made an error in 2.086.
+            // Eligible for removal in 2.091.
             if (mt.ident.equals(Id.This))
             {
-                deprecation(mt.loc, "Using `this` as a type is deprecated. Use `typeof(this)` instead");
+                error(mt.loc, "Using `this` as a type is obsolete. Use `typeof(this)` instead");
             }
             if (AggregateDeclaration ad = sc.getStructClassScope())
             {
@@ -2607,6 +2646,31 @@ void resolve(Type mt, const ref Loc loc, Scope* sc, Expression* pe, Type* pt, Ds
 
         Dsymbol scopesym;
         Dsymbol s = sc.search(loc, mt.ident, &scopesym);
+        /*
+         * https://issues.dlang.org/show_bug.cgi?id=1170
+         * https://issues.dlang.org/show_bug.cgi?id=10739
+         *
+         * If a symbol is not found, it might be declared in
+         * a mixin-ed string or a mixin-ed template, so before
+         * issuing an error semantically analyze all string/template
+         * mixins that are members of the current ScopeDsymbol.
+         */
+        if (!s && sc.enclosing)
+        {
+            ScopeDsymbol sds = sc.enclosing.scopesym;
+            if (sds && sds.members)
+            {
+                void semanticOnMixin(Dsymbol member)
+                {
+                    if (auto compileDecl = member.isCompileDeclaration())
+                        compileDecl.dsymbolSemantic(sc);
+                    else if (auto mixinTempl = member.isTemplateMixin())
+                        mixinTempl.dsymbolSemantic(sc);
+                }
+                sds.members.foreachDsymbol( s => semanticOnMixin(s) );
+                s = sc.search(loc, mt.ident, &scopesym);
+            }
+        }
 
         if (s)
         {
@@ -3429,31 +3493,8 @@ Expression dotExp(Type mt, Scope* sc, Expression e, Identifier ident, int flag)
             return e;
         }
 
-        Dsymbol searchSym()
-        {
-            int flags = sc.flags & SCOPE.ignoresymbolvisibility ? IgnoreSymbolVisibility : 0;
-
-            Dsymbol sold = void;
-            if (global.params.bug10378 || global.params.check10378)
-            {
-                sold = mt.sym.search(e.loc, ident, flags);
-                if (!global.params.check10378)
-                    return sold;
-            }
-
-            auto s = mt.sym.search(e.loc, ident, flags | IgnorePrivateImports);
-            if (global.params.check10378)
-            {
-                alias snew = s;
-                if (sold !is snew)
-                    Scope.deprecation10378(e.loc, sold, snew);
-                if (global.params.bug10378)
-                    s = sold;
-            }
-            return s;
-        }
-
-        s = searchSym();
+        immutable flags = sc.flags & SCOPE.ignoresymbolvisibility ? IgnoreSymbolVisibility : 0;
+        s = mt.sym.search(e.loc, ident, flags | IgnorePrivateImports);
     L1:
         if (!s)
         {
@@ -3461,8 +3502,7 @@ Expression dotExp(Type mt, Scope* sc, Expression e, Identifier ident, int flag)
         }
         if (!(sc.flags & SCOPE.ignoresymbolvisibility) && !symbolIsVisible(sc, s))
         {
-            .deprecation(e.loc, "`%s` is not visible from module `%s`", s.toPrettyChars(), sc._module.toPrettyChars());
-            // return noMember(sc, e, ident, flag);
+            return noMember(mt, sc, e, ident, flag);
         }
         if (!s.isFuncDeclaration()) // because of overloading
         {
@@ -3737,36 +3777,9 @@ Expression dotExp(Type mt, Scope* sc, Expression e, Identifier ident, int flag)
             return e;
         }
 
-        Dsymbol searchSym()
-        {
-            int flags = sc.flags & SCOPE.ignoresymbolvisibility ? IgnoreSymbolVisibility : 0;
-            Dsymbol sold = void;
-            if (global.params.bug10378 || global.params.check10378)
-            {
-                sold = mt.sym.search(e.loc, ident, flags | IgnoreSymbolVisibility);
-                if (!global.params.check10378)
-                    return sold;
-            }
+        int flags = sc.flags & SCOPE.ignoresymbolvisibility ? IgnoreSymbolVisibility : 0;
+        s = mt.sym.search(e.loc, ident, flags | IgnorePrivateImports);
 
-            auto s = mt.sym.search(e.loc, ident, flags | SearchLocalsOnly);
-            if (!s && !(flags & IgnoreSymbolVisibility))
-            {
-                s = mt.sym.search(e.loc, ident, flags | SearchLocalsOnly | IgnoreSymbolVisibility);
-                if (s && !(flags & IgnoreErrors))
-                    .deprecation(e.loc, "`%s` is not visible from class `%s`", s.toPrettyChars(), mt.sym.toChars());
-            }
-            if (global.params.check10378)
-            {
-                alias snew = s;
-                if (sold !is snew)
-                    Scope.deprecation10378(e.loc, sold, snew);
-                if (global.params.bug10378)
-                    s = sold;
-            }
-            return s;
-        }
-
-        s = searchSym();
     L1:
         if (!s)
         {
@@ -3797,7 +3810,12 @@ Expression dotExp(Type mt, Scope* sc, Expression e, Identifier ident, int flag)
 
             if (ident == Id.classinfo)
             {
-                assert(Type.typeinfoclass);
+                if (!Type.typeinfoclass)
+                {
+                    error(e.loc, "`object.TypeInfo_Class` could not be found, but is implicitly used");
+                    return new ErrorExp();
+                }
+
                 Type t = Type.typeinfoclass.type;
                 if (e.op == TOK.type || e.op == TOK.dotType)
                 {
@@ -3914,8 +3932,7 @@ Expression dotExp(Type mt, Scope* sc, Expression e, Identifier ident, int flag)
         }
         if (!(sc.flags & SCOPE.ignoresymbolvisibility) && !symbolIsVisible(sc, s))
         {
-            .deprecation(e.loc, "`%s` is not visible from module `%s`", s.toPrettyChars(), sc._module.toPrettyChars());
-            // return noMember(sc, e, ident, flag);
+            return noMember(mt, sc, e, ident, flag);
         }
         if (!s.isFuncDeclaration()) // because of overloading
         {
@@ -4208,14 +4225,14 @@ Expression defaultInit(Type mt, const ref Loc loc)
         case Tfloat32:
         case Tfloat64:
         case Tfloat80:
-            return new RealExp(loc, target.RealProperties.snan, mt);
+            return new RealExp(loc, target.RealProperties.nan, mt);
 
         case Tcomplex32:
         case Tcomplex64:
         case Tcomplex80:
             {
                 // Can't use fvalue + I*fvalue (the im part becomes a quiet NaN).
-                const cvalue = complex_t(target.RealProperties.snan, target.RealProperties.snan);
+                const cvalue = complex_t(target.RealProperties.nan, target.RealProperties.nan);
                 return new ComplexExp(loc, cvalue, mt);
             }
 

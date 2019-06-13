@@ -967,15 +967,6 @@ Lagain:
                 default:     r = RTLSYM_MEMSETN;    break;
             }
 
-            if (sz == 16 && !irs.params.is64bit && irs.params.isOSX && tyaggregate(evalue.Ety))
-            {
-                // cast to cdouble to match the parameter type
-                // otherwise it may not get the proper alignment
-                const tym = TYcdouble | (evalue.Ety & ~mTYbasic);
-                evalue = addressElem(evalue, tb);
-                evalue = el_una(OPind, tym, evalue);
-            }
-
             /* Determine if we need to do postblit
              */
             if (op != TOK.blit)
@@ -1041,6 +1032,30 @@ Lagain:
     if (config.exe == EX_WIN64 && sz > REGSIZE)
     {
         evalue = addressElem(evalue, tb);
+    }
+    // cast to the proper parameter type
+    else if (r != RTLSYM_MEMSETN)
+    {
+        tym_t tym;
+        switch (r)
+        {
+            case RTLSYM_MEMSET8:      tym = TYchar;     break;
+            case RTLSYM_MEMSET16:     tym = TYshort;    break;
+            case RTLSYM_MEMSET32:     tym = TYlong;     break;
+            case RTLSYM_MEMSET64:     tym = TYllong;    break;
+            case RTLSYM_MEMSET80:     tym = TYldouble;  break;
+            case RTLSYM_MEMSET160:    tym = TYcldouble; break;
+            case RTLSYM_MEMSET128:    tym = TYcdouble;  break;
+            case RTLSYM_MEMSET128ii:  tym = TYucent;    break;
+            case RTLSYM_MEMSETFLOAT:  tym = TYfloat;    break;
+            case RTLSYM_MEMSETDOUBLE: tym = TYdouble;   break;
+            case RTLSYM_MEMSETSIMD:   tym = TYfloat4;   break;
+            default:
+                assert(0);
+        }
+        tym = tym | (evalue.Ety & ~mTYbasic);
+        evalue = addressElem(evalue, tb);
+        evalue = el_una(OPind, tym, evalue);
     }
 
     evalue = useOPstrpar(evalue);
@@ -1441,28 +1456,12 @@ elem *toElem(Expression e, IRState *irs)
             {
                 case TYfloat:
                 case TYifloat:
-                    /* This assignment involves a conversion, which
-                     * unfortunately also converts SNAN to QNAN.
-                     */
                     e.EV.Vfloat = cast(float) re.value;
-                    if (CTFloat.isSNaN(re.value))
-                    {
-                        // Put SNAN back
-                        e.EV.Vuns &= 0xFFBFFFFFL;
-                    }
                     break;
 
                 case TYdouble:
                 case TYidouble:
-                    /* This assignment involves a conversion, which
-                     * unfortunately also converts SNAN to QNAN.
-                     */
                     e.EV.Vdouble = cast(double) re.value;
-                    if (CTFloat.isSNaN(re.value))
-                    {
-                        // Put SNAN back
-                        e.EV.Vullong &= 0xFFF7FFFFFFFFFFFFUL;
-                    }
                     break;
 
                 case TYldouble:
@@ -4165,7 +4164,14 @@ elem *toElem(Expression e, IRState *irs)
             else
             {
                 // For other vector expressions this just a paint operation.
-                result = toElem(vae.e1, irs);
+                elem* e = toElem(vae.e1, irs);
+                type* tarray = Type_toCtype(vae.type);
+                // Take the address then repaint,
+                // this makes it swap to the right registers
+                e = addressElem(e, vae.e1.type);
+                e = el_una(OPind, tarray.Tty, e);
+                e.ET = tarray;
+                result = e;
             }
             result.Ety = totym(vae.type);
             elem_setLoc(result, vae.loc);
@@ -4281,7 +4287,7 @@ elem *toElem(Expression e, IRState *irs)
 
                 if (fsize != tsize)
                 {   // Array element sizes do not match, so we must adjust the dimensions
-                    if (fsize % tsize == 0)
+                    if (tsize != 0 && fsize % tsize == 0)
                     {
                         // Set array dimension to (length * (fsize / tsize))
                         // Generate pair(e.length * (fsize/tsize), es.ptr)
@@ -5693,7 +5699,6 @@ private elem *toElemStructLit(StructLiteralExp sle, IRState *irs, TOK op, Symbol
              *  S s = {f2:x, f3:y};     // filled holes: 2..8 and 12..16
              */
             size_t vend = sle.sd.fields.dim;
-        Lagain:
             size_t holeEnd = structsize;
             size_t offset2 = structsize;
             foreach (j; i + 1 .. vend)
@@ -5989,7 +5994,7 @@ Symbol *toStringSymbol(const(char)* str, size_t len, size_t sz)
                 import dmd.backend.md5;
                 MD5_CTX mdContext = void;
                 MD5Init(&mdContext);
-                MD5Update(&mdContext, cast(ubyte*)buf.peekString(), cast(uint)buf.offset);
+                MD5Update(&mdContext, cast(ubyte*)buf.peekChars(), cast(uint)buf.offset);
                 MD5Final(&mdContext);
                 buf.setsize(2);
                 foreach (u; mdContext.digest)
@@ -6001,7 +6006,7 @@ Symbol *toStringSymbol(const(char)* str, size_t len, size_t sz)
                 }
             }
 
-            si = symbol_calloc(buf.peekString(), cast(uint)buf.offset);
+            si = symbol_calloc(buf.peekChars(), cast(uint)buf.offset);
             si.Sclass = SCcomdat;
             si.Stype = type_static_array(cast(uint)(len * sz), tstypes[TYchar]);
             si.Stype.Tcount++;

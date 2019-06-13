@@ -30,6 +30,7 @@ struct ASTBase
     import dmd.id;
     import dmd.errors;
     import dmd.lexer;
+    import dmd.utils : toDString;
 
     import core.stdc.string;
     import core.stdc.stdarg;
@@ -246,6 +247,7 @@ struct ASTBase
         real_        = 8,
         imaginary    = 0x10,
         complex      = 0x20,
+        char_        = 0x40,
     }
 
     enum PKG : int
@@ -387,7 +389,7 @@ struct ASTBase
             return true;
         }
 
-        bool isOverloadable()
+        bool isOverloadable() const
         {
             return false;
         }
@@ -725,7 +727,7 @@ struct ASTBase
             return null;
         }
 
-        override bool isOverloadable()
+        override bool isOverloadable() const
         {
             return true;
         }
@@ -759,7 +761,7 @@ struct ASTBase
             this.type = type;
         }
 
-        override bool isOverloadable()
+        override bool isOverloadable() const
         {
             //assume overloadable until alias is resolved;
             // should be modified when semantic analysis is added
@@ -1078,7 +1080,7 @@ struct ASTBase
             }
         }
 
-        override bool isOverloadable()
+        override bool isOverloadable() const
         {
             return true;
         }
@@ -1231,9 +1233,9 @@ struct ASTBase
                 udas = udas1;
             else
             {
-                udas = new Expressions();
-                udas.push(new TupleExp(Loc.initial, udas1));
-                udas.push(new TupleExp(Loc.initial, udas2));
+                udas = new Expressions(2);
+                (*udas)[0] = new TupleExp(Loc.initial, udas1);
+                (*udas)[1] = new TupleExp(Loc.initial, udas2);
             }
             return udas;
         }
@@ -1466,15 +1468,14 @@ struct ASTBase
     {
         extern (C++) __gshared AggregateDeclaration moduleinfo;
 
-        File* srcfile;
+        const FileName srcfile;
         const(char)* arg;
 
         extern (D) this(const(char)* filename, Identifier ident, int doDocComment, int doHdrGen)
         {
             super(ident);
             this.arg = filename;
-            const(char)* srcfilename = FileName.defaultExt(filename, global.mars_ext);
-            srcfile = new File(srcfilename);
+            srcfile = FileName(FileName.defaultExt(filename.toDString, global.mars_ext));
         }
 
         override void accept(Visitor v)
@@ -2595,9 +2596,6 @@ struct ASTBase
         }
     }
 
-    extern (C++) __gshared int Tsize_t = Tuns32;
-    extern (C++) __gshared int Tptrdiff_t = Tint32;
-
     extern (C++) abstract class Type : ASTNode
     {
         TY ty;
@@ -2798,19 +2796,10 @@ struct ASTBase
             tdstring = tdchar.immutableOf().arrayOf();
             tvalist = Target.va_listType();
 
-            if (global.params.isLP64)
-            {
-                Tsize_t = Tuns64;
-                Tptrdiff_t = Tint64;
-            }
-            else
-            {
-                Tsize_t = Tuns32;
-                Tptrdiff_t = Tint32;
-            }
+            const isLP64 = global.params.isLP64;
 
-            tsize_t = basic[Tsize_t];
-            tptrdiff_t = basic[Tptrdiff_t];
+            tsize_t    = basic[isLP64 ? Tuns64 : Tuns32];
+            tptrdiff_t = basic[isLP64 ? Tint64 : Tint32];
             thash_t = tsize_t;
         }
 
@@ -3547,17 +3536,17 @@ struct ASTBase
 
             case Tchar:
                 d = Token.toChars(TOK.char_);
-                flags |= TFlags.integral | TFlags.unsigned;
+                flags |= TFlags.integral | TFlags.unsigned | TFlags.char_;
                 break;
 
             case Twchar:
                 d = Token.toChars(TOK.wchar_);
-                flags |= TFlags.integral | TFlags.unsigned;
+                flags |= TFlags.integral | TFlags.unsigned | TFlags.char_;
                 break;
 
             case Tdchar:
                 d = Token.toChars(TOK.dchar_);
-                flags |= TFlags.integral | TFlags.unsigned;
+                flags |= TFlags.integral | TFlags.unsigned | TFlags.char_;
                 break;
 
             default:
@@ -6249,12 +6238,12 @@ struct ASTBase
                 for (size_t i = 0; i < packages.dim; i++)
                 {
                     Identifier pid = (*packages)[i];
-                    buf.writestring(pid.toChars());
+                    buf.writestring(pid.toString());
                     buf.writeByte('.');
                 }
             }
-            buf.writestring(id.toChars());
-            return buf.extractString();
+            buf.writestring(id.toString());
+            return buf.extractChars();
         }
     }
 
