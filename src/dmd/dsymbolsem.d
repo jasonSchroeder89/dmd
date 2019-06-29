@@ -422,8 +422,9 @@ private bool buildCopyCtor(StructDeclaration sd, Scope* sc)
     if (global.errors)
         return false;
 
+    bool hasPostblit;
     if (sd.postblit)
-        return false;
+        hasPostblit = true;
 
     auto ctor = sd.search(sd.loc, Id.ctor);
     CtorDeclaration cpCtor;
@@ -473,7 +474,9 @@ private bool buildCopyCtor(StructDeclaration sd, Scope* sc)
         return true;
     }
     else if (cpCtor)
-        return true;
+    {
+        return !hasPostblit;
+    }
 
 LcheckFields:
     VarDeclaration fieldWithCpCtor;
@@ -503,6 +506,9 @@ LcheckFields:
         return false;
     }
     else if (!fieldWithCpCtor)
+        return false;
+
+    if (hasPostblit)
         return false;
 
     //printf("generating copy constructor for %s\n", sd.toChars());
@@ -755,6 +761,9 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
         if (dsym.semanticRun >= PASS.semanticdone)
             return;
 
+        if (sc && sc.inunion && sc.inunion.isAnonDeclaration())
+            dsym.overlapped = true;
+
         Scope* scx = null;
         if (dsym._scope)
         {
@@ -776,6 +785,7 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
             dsym.error("extern symbols cannot have initializers");
 
         dsym.userAttribDecl = sc.userAttribDecl;
+        dsym.namespace = sc.namespace;
 
         AggregateDeclaration ad = dsym.isThis();
         if (ad)
@@ -1786,7 +1796,7 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
         {
             sc = sc.push();
             sc.stc &= ~(STC.auto_ | STC.scope_ | STC.static_ | STC.tls | STC.gshared);
-            sc.inunion = scd.isunion;
+            sc.inunion = scd.isunion ? scd : null;
             sc.flags = 0;
             for (size_t i = 0; i < scd.decl.dim; i++)
             {
@@ -2105,6 +2115,64 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
             }
         }
         attribSemantic(cd);
+    }
+
+    override void visit(CPPNamespaceDeclaration ns)
+    {
+        Identifier identFromSE (StringExp se)
+        {
+            const sident = se.toStringz();
+            if (!sident.length || !Identifier.isValidIdentifier(sident))
+            {
+                ns.exp.error("expected valid identifer for C++ namespace but got `%.*s`",
+                             cast(int)sident.length, sident.ptr);
+                return null;
+            }
+            else
+                return Identifier.idPool(sident);
+        }
+
+        if (ns.ident is null)
+        {
+            ns.namespace = sc.namespace;
+            sc = sc.startCTFE();
+            ns.exp = ns.exp.expressionSemantic(sc);
+            ns.exp = resolveProperties(sc, ns.exp);
+            sc = sc.endCTFE();
+            ns.exp = ns.exp.ctfeInterpret();
+            // Can be either a tuple of strings or a string itself
+            if (auto te = ns.exp.isTupleExp())
+            {
+                expandTuples(te.exps);
+                CPPNamespaceDeclaration current = ns.namespace;
+                for (size_t d = 0; d < te.exps.dim; ++d)
+                {
+                    auto exp = (*te.exps)[d];
+                    auto prev = d ? current : ns.namespace;
+                    current = (d + 1) != te.exps.dim
+                        ? new CPPNamespaceDeclaration(exp, null)
+                        : ns;
+                    current.exp = exp;
+                    current.namespace = prev;
+                    if (auto se = exp.toStringExp())
+                    {
+                        current.ident = identFromSE(se);
+                        if (current.ident is null)
+                            return; // An error happened in `identFromSE`
+                    }
+                    else
+                        ns.exp.error("`%s`: index %d is not a string constant, it is a `%s`",
+                                     ns.exp.toChars(), d, ns.exp.type.toChars());
+                }
+            }
+            else if (auto se = ns.exp.toStringExp())
+                ns.ident = identFromSE(se);
+            else
+                ns.exp.error("compile time string constant (or tuple) expected, not `%s`",
+                             ns.exp.toChars());
+        }
+        if (ns.ident)
+            attribSemantic(ns);
     }
 
     override void visit(UserAttributeDeclaration uad)
@@ -2629,6 +2697,7 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
 
         tempdecl.parent = sc.parent;
         tempdecl.protection = sc.protection;
+        tempdecl.namespace = sc.namespace;
         tempdecl.isstatic = tempdecl.toParent().isModule() || (tempdecl._scope.stc & STC.static_);
 
         if (!tempdecl.isstatic)
@@ -3020,7 +3089,7 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
                     else
                     {
                         // insert the new namespace
-                        Nspace childns = new Nspace(ns.loc, Identifier.idPool(ident), null, parentns.members, ns.mangleOnly);
+                        Nspace childns = new Nspace(ns.loc, Identifier.idPool(ident), null, parentns.members);
                         parentns.members = new Dsymbols;
                         parentns.members.push(childns);
                         parentns = childns;
@@ -3103,6 +3172,7 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
         if (!sc || funcdecl.errors)
             return;
 
+        funcdecl.namespace = sc.namespace;
         funcdecl.parent = sc.parent;
         Dsymbol parent = funcdecl.toParent();
 
@@ -4541,6 +4611,7 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
 
             if (sc.linkage == LINK.cpp)
                 sd.classKind = ClassKind.cpp;
+            sd.namespace = sc.namespace;
         }
         else if (sd.symtab && !scx)
             return;
@@ -4760,6 +4831,7 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
 
             if (sc.linkage == LINK.cpp)
                 cldec.classKind = ClassKind.cpp;
+            cldec.namespace = sc.namespace;
             if (sc.linkage == LINK.objc)
                 objc.setObjc(cldec);
         }
@@ -5478,6 +5550,7 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
 
             if (!idec.baseclasses.dim && sc.linkage == LINK.cpp)
                 idec.classKind = ClassKind.cpp;
+            idec.namespace = sc.namespace;
 
             if (sc.linkage == LINK.objc)
             {
@@ -5768,6 +5841,9 @@ void templateInstanceSemantic(TemplateInstance tempinst, Scope* sc, Expressions*
     tempinst.hasNestedArgs(tempinst.tiargs, tempdecl.isstatic);
     if (tempinst.errors)
         goto Lerror;
+
+    // Copy the tempdecl namespace (not the scope one)
+    tempinst.namespace = tempdecl.namespace;
 
     /* See if there is an existing TemplateInstantiation that already
      * implements the typeargs. If so, just refer to that one instead.

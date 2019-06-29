@@ -1768,70 +1768,6 @@ private elem *elor(elem *e, goal_t goal)
     }
   L1:
 
-    if (OPTIMIZER)
-    {
-        /* Replace:
-         *   i | (i << c1) | (i << c2) | (i * c3) ...
-         * with:
-         *   i * (1 + (1 << c1) + (1 << c2) + c3 ...)
-         */
-        elem*[8] ops;    // 8 bytes in a 64 bit register, not likely to need more
-        int opsi = 0;
-        elem *ei = null;
-        targ_ullong bits = 0;
-        if (fillinops(ops.ptr, &opsi, ops.length, OPor, e) && opsi > 1)
-        {
-            for (int i = 0; i < opsi; ++i)
-            {
-                elem *eq = ops[i];
-                if (eq.Eoper == OPshl && eq.EV.E2.Eoper == OPconst)
-                {
-                    bits |= 1UL << el_tolong(eq.EV.E2);
-                    eq = eq.EV.E1;
-                }
-                else if (eq.Eoper == OPmul && eq.EV.E2.Eoper == OPconst)
-                {
-                    bits |= el_tolong(eq.EV.E2);
-                    eq = eq.EV.E1;
-                }
-                else
-                    bits |= 1;
-                if (el_sideeffect(eq))
-                    goto L2;
-                if (ei)
-                {
-                    if (!el_match(ei, eq))
-                        goto L2;
-                }
-                else
-                {
-                    ei = eq;
-                }
-            }
-            tym_t ty = e.Ety;
-
-            // Free unused nodes
-            el_opFree(e, OPor);
-            for (int i = 0; i < opsi; ++i)
-            {
-                elem *eq = ops[i];
-                if ((eq.Eoper == OPshl || eq.Eoper == OPmul) &&
-                    eq.EV.E2.Eoper == OPconst)
-                {
-                    if (eq.EV.E1 == ei)
-                        eq.EV.E1 = null;
-                }
-                if (eq != ei)
-                    el_free(eq);
-            }
-
-            e = el_bin(OPmul, ty, ei, el_long(ty, bits));
-            return e;
-        }
-
-      L2:
-    }
-
     return elbitwise(e, goal);
 }
 
@@ -2259,7 +2195,7 @@ L2:
     int e1op = e1.Eoper;
 
   // c,e => e
-    if (OTleaf(e1op) && !OTsideff(e1op) && !(e1.Ety & mTYvolatile))
+    if (OTleaf(e1op) && !OTsideff(e1op) && !(e1.Ety & (mTYvolatile | mTYshared)))
     {
         e2.Ety = e.Ety;
         e = el_selecte2(e);
@@ -2666,7 +2602,7 @@ private elem * eloror(elem *e, goal_t goal)
         tysize(ty1) <= _tysize[TYint] &&
         !tyfloating(ty2) &&
         !tyfloating(ty1) &&
-        !(ty2 & mTYvolatile))
+        !(ty2 & (mTYvolatile | mTYshared)))
     {   /* Convert (e1 || e2) => (e1 | e2)      */
         e.Eoper = OPor;
         e.Ety = ty1;
@@ -5312,7 +5248,7 @@ beg:
     auto op = e.Eoper;
     if (OTleaf(op))                     // if not an operator node
     {
-        if (goal || OTsideff(op) || e.Ety & mTYvolatile)
+        if (goal || OTsideff(op) || e.Ety & (mTYvolatile | mTYshared))
         {
             return e;
         }
@@ -5679,7 +5615,7 @@ beg:
   else /* unary operator */
   {
         assert(!e.EV.E2 || op == OPinfo || op == OPddtor);
-        if (!goal && !OTsideff(op) && !(e.Ety & mTYvolatile))
+        if (!goal && !OTsideff(op) && !(e.Ety & (mTYvolatile | mTYshared)))
         {
             tym_t tym = e.EV.E1.Ety;
 
@@ -5781,6 +5717,7 @@ void postoptelem(elem *e)
             {
                 version (MARS)
                 if (e.EV.E1.Eoper == OPconst &&
+                    tybasic(e.EV.E1.Ety) == TYnptr &&   // Allow TYsptr to reference GS:[0000] etc.
                     el_tolong(e.EV.E1) >= 0 && el_tolong(e.EV.E1) < 4096)
                 {
                     error(pos.Sfilename, pos.Slinnum, pos.Scharnum, "null dereference in function %s", funcsym_p.Sident.ptr);

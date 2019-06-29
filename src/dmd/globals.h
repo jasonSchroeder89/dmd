@@ -125,7 +125,7 @@ struct Param
     bool release;       // build release version
     bool preservePaths; // true means don't strip path from source file
     Diagnostic warnings;
-    bool pic;           // generate position-independent-code for shared libs
+    unsigned char pic;  // generate position-independent-code for shared libs
     bool color;         // use ANSI colors in console output
     bool cov;           // generate code coverage data
     unsigned char covPercent;   // 0..100 code coverage percentage required
@@ -147,6 +147,7 @@ struct Param
     bool dtorFields;        // destruct fields of partially constructed objects
                             // https://issues.dlang.org/show_bug.cgi?id=14246
     bool fieldwise;         // do struct equality testing field-wise rather than by memcmp()
+    bool rvalueRefParam;    // allow rvalues to be arguments to ref parameters
     CppStdRevision cplusplus;  // version of C++ name mangling to support
     bool markdown;          // enable Markdown replacements in Ddoc
     bool vmarkdown;         // list instances of Markdown replacements in Ddoc
@@ -303,10 +304,17 @@ struct Global
 
 extern Global global;
 
-// Because int64_t and friends may be any integral type of the
-// correct size, we have to explicitly ask for the correct
-// integer type to get the correct mangling with dmd
-#if __LP64__
+// Because int64_t and friends may be any integral type of the correct size,
+// we have to explicitly ask for the correct integer type to get the correct
+// mangling with dmd. The #if logic here should match the mangling of
+// Tint64 and Tuns64 in cppmangle.d.
+#if MARS && DMD_VERSION >= 2079 && DMD_VERSION <= 2081 && \
+    __APPLE__ && __SIZEOF_LONG__ == 8
+// DMD versions between 2.079 and 2.081 mapped D long to int64_t on OS X.
+typedef uint64_t dinteger_t;
+typedef int64_t sinteger_t;
+typedef uint64_t uinteger_t;
+#elif __SIZEOF_LONG__ == 8
 // Be careful not to care about sign when using dinteger_t
 // use this instead of integer_t to
 // avoid conflicts with system #include's
@@ -343,7 +351,12 @@ struct Loc
         filename = NULL;
     }
 
-    Loc(const char *filename, unsigned linnum, unsigned charnum);
+    Loc(const char *filename, unsigned linnum, unsigned charnum)
+    {
+        this->linnum = linnum;
+        this->charnum = charnum;
+        this->filename = filename;
+    }
 
     const char *toChars(bool showColumns = global.params.showColumns) const;
     bool equals(const Loc& loc) const;

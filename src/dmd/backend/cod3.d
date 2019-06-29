@@ -5098,12 +5098,12 @@ void assignaddrc(code *c)
 
             case FLcs:
                 sn = c.IEV1.Vuns;
-                if (!CSE_loaded(sn))            // if never loaded
+                if (!CSE.loaded(sn))            // if never loaded
                 {
                     c.Iop = NOP;
                     continue;
                 }
-                c.IEV1.Vpointer = CSE_offset(sn) + CSoff + BPoff;
+                c.IEV1.Vpointer = CSE.offset(sn) + CSoff + BPoff;
                 c.Iflags |= CFunambig;
                 goto L2;
 
@@ -5575,7 +5575,11 @@ void pinholeopt(code *c,block *b)
                 if (op == 0xF7 && rm >= modregrm(3,0,AX) && rm <= modregrm(3,0,7) && (I64 || ereg < 4))
                 {
                     if (u == 0xFF)
+                    {
+                        if (ereg & 4) // SIL,DIL,BPL,SPL need REX prefix
+                            c.Irex |= REX;
                         goto L4;
+                    }
                     if ((u & 0xFFFF) == 0xFF00 && shortop && !c.Irex && ereg < 4)
                     {
                         ereg |= 4;                /* to regH      */

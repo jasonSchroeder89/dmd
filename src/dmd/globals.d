@@ -76,6 +76,13 @@ enum CPU
     native              // the machine the compiler is being run on
 }
 
+enum PIC : ubyte
+{
+    fixed,              /// located at a specific address
+    pic,                /// Position Independent Code
+    pie,                /// Position Independent Executable
+}
+
 /**
 Each flag represents a field that can be included in the JSON output.
 
@@ -141,7 +148,7 @@ struct Param
     bool release;           // build release version
     bool preservePaths;     // true means don't strip path from source file
     DiagnosticReporting warnings = DiagnosticReporting.off;  // how compiler warnings are handled
-    bool pic;               // generate position-independent-code for shared libs
+    PIC pic = PIC.fixed;    // generate fixed, pic or pie code
     bool color;             // use ANSI colors in console output
     bool cov;               // generate code coverage data
     ubyte covPercent;       // 0..100 code coverage percentage required
@@ -168,6 +175,7 @@ struct Param
     bool dtorFields;        // destruct fields of partially constructed objects
                             // https://issues.dlang.org/show_bug.cgi?id=14246
     bool fieldwise;         // do struct equality testing field-wise rather than by memcmp()
+    bool rvalueRefParam;    // allow rvalues to be arguments to ref parameters
 
     CppStdRevision cplusplus = CppStdRevision.cpp98;    // version of C++ standard to support
 
@@ -260,6 +268,19 @@ struct Param
     const(char)[] resfile;
     const(char)[] exefile;
     const(char)[] mapfile;
+
+    // generate code for POSIX
+    @property bool isPOSIX() scope const pure nothrow @nogc @safe
+    out(result) { assert(result || isWindows); }
+    do
+    {
+        return isLinux
+            || isOSX
+            || isFreeBSD
+            || isOpenBSD
+            || isDragonFlyBSD
+            || isSolaris;
+    }
 }
 
 alias structalign_t = uint;

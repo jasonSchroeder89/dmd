@@ -46,6 +46,8 @@ import dmd.hdrgen;
 import dmd.id;
 import dmd.identifier;
 import dmd.imphint;
+import dmd.init;
+import dmd.initsem;
 import dmd.inline;
 import dmd.intrange;
 import dmd.mtype;
@@ -1909,6 +1911,8 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
         if (i < nparams)
         {
             Parameter p = tf.parameterList[i];
+            Type targ = arg.type;               // keep original type for isCopyable() because alias this
+                                                // resolution may hide an uncopyable type
 
             if (!(p.storageClass & STC.lazy_ && p.type.ty == Tvoid))
             {
@@ -1926,6 +1930,17 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
             }
             if (p.storageClass & STC.ref_)
             {
+                if (global.params.rvalueRefParam &&
+                    !arg.isLvalue() &&
+                    targ.isCopyable())
+                {   /* allow rvalues to be passed to ref parameters by copying
+                     * them to a temp, then pass the temp as the argument
+                     */
+                    auto v = copyToTemp(0, "__rvalue", arg);
+                    Expression ev = new DeclarationExp(arg.loc, v);
+                    ev = new CommaExp(arg.loc, ev, new VarExp(arg.loc, v));
+                    arg = ev.expressionSemantic(sc);
+                }
                 arg = arg.toLvalue(sc, arg);
 
                 // Look for mutable misaligned pointer, etc., in @safe mode
@@ -2597,6 +2612,22 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                     {
                         result = e;
                         return;
+                    }
+                }
+                // Try Type.opDispatch (so the static version)
+                else if (ss.withstate.exp && ss.withstate.exp.op == TOK.type)
+                {
+                    if (Type t = ss.withstate.exp.isTypeExp().type)
+                    {
+                        Expression e;
+                        e = new TypeExp(exp.loc, t);
+                        e = new DotIdExp(exp.loc, e, exp.ident);
+                        e = e.trySemantic(sc);
+                        if (e)
+                        {
+                            result = e;
+                            return;
+                        }
                     }
                 }
             }
@@ -3509,6 +3540,22 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 {
                     exp.error("no constructor for `%s`", cd.toChars());
                     return setError();
+                }
+
+                // https://issues.dlang.org/show_bug.cgi?id=19941
+                // Run semantic on all field initializers to resolve any forward
+                // references. This is the same as done for structs in sd.fill().
+                for (ClassDeclaration c = cd; c; c = c.baseClass)
+                {
+                    foreach (v; c.fields)
+                    {
+                        if (v.inuse || v._scope is null || v._init is null ||
+                            v._init.isVoidInitializer())
+                            continue;
+                        v.inuse++;
+                        v._init = v._init.initializerSemantic(v._scope, v.type, INITinterpret);
+                        v.inuse--;
+                    }
                 }
             }
         }
@@ -4701,7 +4748,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 .error(exp.loc, "%s `%s%s` is not callable using argument types `%s`",
                     p, exp.e1.toChars(), parametersTypeToChars(tf.parameterList), buf.peekChars());
                 if (failMessage)
-                    errorSupplemental(exp.loc, failMessage);
+                    errorSupplemental(exp.loc, "%s", failMessage);
                 return setError();
             }
             // Purity and safety check should run after testing arguments matching
@@ -4774,7 +4821,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                     .error(exp.loc, "%s `%s%s` is not callable using argument types `%s`",
                         exp.f.kind(), exp.f.toPrettyChars(), parametersTypeToChars(tf.parameterList), buf.peekChars());
                     if (failMessage)
-                        errorSupplemental(exp.loc, failMessage);
+                        errorSupplemental(exp.loc, "%s", failMessage);
                     exp.f = null;
                 }
             }
@@ -6771,6 +6818,14 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return setError();
         }
 
+        // https://issues.dlang.org/show_bug.cgi?id=19954
+        if (exp.e1.type.ty == Ttuple)
+        {
+            TupleExp te = exp.e1.isTupleExp();
+            if (te.exps.dim == 1)
+                exp.e1 = (*te.exps)[0];
+        }
+
         // only allow S(x) rewrite if cast specified S explicitly.
         // See https://issues.dlang.org/show_bug.cgi?id=18545
         const bool allowImplicitConstruction = exp.to !is null;
@@ -6850,9 +6905,10 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         }
 
         // Check for unsafe casts
-        if (sc.func && !sc.intypeof &&
+        if (!sc.intypeof &&
             !isSafeCast(ex, t1b, tob) &&
-            sc.func.setUnsafe() && !(sc.flags & SCOPE.debug_))
+            (!sc.func && sc.stc & STC.safe || sc.func && sc.func.setUnsafe()) &&
+            !(sc.flags & SCOPE.debug_))
         {
             exp.error("cast from `%s` to `%s` not allowed in safe code", exp.e1.type.toChars(), exp.to.toChars());
             return setError();
@@ -6876,41 +6932,45 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 }
             }
 
-            if(t1b.ty == Tarray && exp.e1.op != TOK.string_ && exp.e1.op != TOK.arrayLiteral)
+            if(t1b.ty == Tarray && exp.e1.op != TOK.arrayLiteral && (sc.flags & SCOPE.ctfe) == 0)
             {
                 auto tFrom = t1b.nextOf();
                 auto tTo = tob.nextOf();
 
-                const uint fromSize = cast(uint)tFrom.size();
-                const uint toSize = cast(uint)tTo.size();
-
-                // If array element sizes do not match, we must adjust the dimensions
-                if (fromSize != toSize)
+                // https://issues.dlang.org/show_bug.cgi?id=19954
+                if (exp.e1.op != TOK.string_ || tTo.ty == Tarray)
                 {
-                    // A runtime check is needed in case arrays don't line up.  That check should
-                    // be done in the implementation of `object.__ArrayCast`
-                    if (toSize == 0 || (fromSize % toSize) != 0)
+                    const uint fromSize = cast(uint)tFrom.size();
+                    const uint toSize = cast(uint)tTo.size();
+
+                    // If array element sizes do not match, we must adjust the dimensions
+                    if (fromSize != toSize)
                     {
                         if (!verifyHookExist(exp.loc, *sc, Id.__ArrayCast, "casting array of structs"))
                             return setError();
 
-                        // lower to `object.__ArrayCast!(TFrom, TTo)(from)`
+                        // A runtime check is needed in case arrays don't line up.  That check should
+                        // be done in the implementation of `object.__ArrayCast`
+                        if (toSize == 0 || (fromSize % toSize) != 0)
+                        {
+                            // lower to `object.__ArrayCast!(TFrom, TTo)(from)`
 
-                        // fully qualify as `object.__ArrayCast`
-                        Expression id = new IdentifierExp(exp.loc, Id.empty);
-                        auto dotid = new DotIdExp(exp.loc, id, Id.object);
+                            // fully qualify as `object.__ArrayCast`
+                            Expression id = new IdentifierExp(exp.loc, Id.empty);
+                            auto dotid = new DotIdExp(exp.loc, id, Id.object);
 
-                        auto tiargs = new Objects();
-                        tiargs.push(tFrom);
-                        tiargs.push(tTo);
-                        auto dt = new DotTemplateInstanceExp(exp.loc, dotid, Id.__ArrayCast, tiargs);
+                            auto tiargs = new Objects();
+                            tiargs.push(tFrom);
+                            tiargs.push(tTo);
+                            auto dt = new DotTemplateInstanceExp(exp.loc, dotid, Id.__ArrayCast, tiargs);
 
-                        auto arguments = new Expressions();
-                        arguments.push(exp.e1);
-                        Expression ce = new CallExp(exp.loc, dt, arguments);
+                            auto arguments = new Expressions();
+                            arguments.push(exp.e1);
+                            Expression ce = new CallExp(exp.loc, dt, arguments);
 
-                        result = expressionSemantic(ce, sc);
-                        return;
+                            result = expressionSemantic(ce, sc);
+                            return;
+                        }
                     }
                 }
             }
@@ -7323,8 +7383,13 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
         if (isAggregate(exp.e1.type))
             exp.error("no `[]` operator overload for type `%s`", exp.e1.type.toChars());
-        else
+        else if (exp.e1.op == TOK.type && exp.e1.type.ty != Ttuple)
+            exp.error("static array of `%s` with multiple lengths not allowed", exp.e1.type.toChars());
+        else if (isIndexableNonAggregate(exp.e1.type))
             exp.error("only one index allowed to index `%s`", exp.e1.type.toChars());
+        else
+            exp.error("cannot use `[]` operator on expression of type `%s`", exp.e1.type.toChars());
+
         result = new ErrorExp();
     }
 
@@ -8649,7 +8714,11 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         else if (auto se = exp.e1.isSliceExp())
         {
             Type tn = se.type.nextOf();
-            if (exp.op == TOK.assign && !tn.isMutable())
+            const fun = sc.func;
+            if (exp.op == TOK.assign && !tn.isMutable() &&
+                // allow modifiation in module ctor, see
+                // https://issues.dlang.org/show_bug.cgi?id=9884
+                (!fun || (fun && !fun.isStaticCtorDeclaration())))
             {
                 exp.error("slice `%s` is not mutable", se.toChars());
                 return setError();

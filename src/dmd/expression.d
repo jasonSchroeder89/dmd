@@ -236,41 +236,41 @@ bool isDotOpDispatch(Expression e)
 extern (C++) void expandTuples(Expressions* exps)
 {
     //printf("expandTuples()\n");
-    if (exps)
-    {
-        for (size_t i = 0; i < exps.dim; i++)
-        {
-            Expression arg = (*exps)[i];
-            if (!arg)
-                continue;
+    if (exps is null)
+        return;
 
-            // Look for tuple with 0 members
-            if (auto e = arg.isTypeExp())
+    for (size_t i = 0; i < exps.dim; i++)
+    {
+        Expression arg = (*exps)[i];
+        if (!arg)
+            continue;
+
+        // Look for tuple with 0 members
+        if (auto e = arg.isTypeExp())
+        {
+            if (auto tt = e.type.toBasetype().isTypeTuple())
             {
-                if (auto tt = e.type.toBasetype().isTypeTuple())
+                if (!tt.arguments || tt.arguments.dim == 0)
                 {
-                    if (!tt.arguments || tt.arguments.dim == 0)
-                    {
-                        exps.remove(i);
-                        if (i == exps.dim)
-                            return;
-                        i--;
-                        continue;
-                    }
+                    exps.remove(i);
+                    if (i == exps.dim)
+                        return;
+                    i--;
+                    continue;
                 }
             }
+        }
 
-            // Inline expand all the tuples
-            while (arg.op == TOK.tuple)
-            {
-                TupleExp te = cast(TupleExp)arg;
-                exps.remove(i); // remove arg
-                exps.insert(i, te.exps); // replace with tuple contents
-                if (i == exps.dim)
-                    return; // empty tuple, no more arguments
-                (*exps)[i] = Expression.combine(te.e0, (*exps)[i]);
-                arg = (*exps)[i];
-            }
+        // Inline expand all the tuples
+        while (arg.op == TOK.tuple)
+        {
+            TupleExp te = cast(TupleExp)arg;
+            exps.remove(i); // remove arg
+            exps.insert(i, te.exps); // replace with tuple contents
+            if (i == exps.dim)
+                return; // empty tuple, no more arguments
+            (*exps)[i] = Expression.combine(te.e0, (*exps)[i]);
+            arg = (*exps)[i];
         }
     }
 }
@@ -1752,18 +1752,8 @@ extern (C++) final class IntegerExp : Expression
         return new IntegerExp(loc, value, type);
     }
 
-    static IntegerExp createi(Loc loc, int value, Type type)
-    {
-        return new IntegerExp(loc, value, type);
-    }
-
     // Same as create, but doesn't allocate memory.
     static void emplace(UnionExp* pue, Loc loc, dinteger_t value, Type type)
-    {
-        emplaceExp!(IntegerExp)(pue, loc, value, type);
-    }
-
-    static void emplacei(UnionExp* pue, Loc loc, int value, Type type)
     {
         emplaceExp!(IntegerExp)(pue, loc, value, type);
     }
@@ -1840,7 +1830,7 @@ extern (C++) final class IntegerExp : Expression
         this.value = normalize(type.toBasetype().ty, value);
     }
 
-    static dinteger_t normalize(TY ty, dinteger_t value)
+    extern (D) static dinteger_t normalize(TY ty, dinteger_t value)
     {
         /* 'Normalize' the value of the integer to be in range of the type
          */
@@ -1887,13 +1877,13 @@ extern (C++) final class IntegerExp : Expression
             break;
 
         case Tpointer:
+            if (target.ptrsize == 8)
+                goto case Tuns64;
             if (target.ptrsize == 4)
-                result = cast(d_uns32)value;
-            else if (target.ptrsize == 8)
-                result = cast(d_uns64)value;
-            else
-                assert(0);
-            break;
+                goto case Tuns32;
+            if (target.ptrsize == 2)
+                goto case Tuns16;
+            assert(0);
 
         default:
             break;
@@ -2407,7 +2397,7 @@ extern (C++) final class StringExp : Expression
         {
             if (auto se = e.isStringExp())
             {
-                return comparex(se) == 0;
+                return compare(se) == 0;
             }
         }
         return false;
@@ -2587,7 +2577,7 @@ extern (C++) final class StringExp : Expression
         return this;
     }
 
-    int comparex(const StringExp se2) const nothrow pure @nogc
+    int compare(const StringExp se2) const nothrow pure @nogc
     {
         //printf("StringExp::compare()\n");
         // Used to sort case statement expressions so we can do an efficient lookup
@@ -5690,7 +5680,7 @@ extern (C++) final class IndexExp : BinExp
         return Expression.modifiableLvalue(sc, e);
     }
 
-    Expression markSettingAAElem()
+    extern (D) Expression markSettingAAElem()
     {
         if (e1.type.toBasetype().ty == Taarray)
         {

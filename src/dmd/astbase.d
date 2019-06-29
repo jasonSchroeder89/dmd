@@ -672,7 +672,7 @@ struct ASTBase
             this.type = type;
             this._init = _init;
             this.loc = loc;
-            this.storage_class = storage_class;
+            this.storage_class = st;
             sequenceNumber = ++nextSequenceNumber;
             ctfeAdrOnStack = -1;
         }
@@ -722,7 +722,7 @@ struct ASTBase
             inferRetType = (type && type.nextOf() is null);
         }
 
-        FuncLiteralDeclaration* isFuncLiteralDeclaration()
+        FuncLiteralDeclaration isFuncLiteralDeclaration()
         {
             return null;
         }
@@ -1173,22 +1173,16 @@ struct ASTBase
     extern (C++) final class Nspace : ScopeDsymbol
     {
         /**
-         * Determines whether the symbol for this namespace should be included in the symbol table.
-         */
-        bool mangleOnly;
-
-        /**
          * Namespace identifier resolved during semantic.
          */
         Expression identExp;
 
-        extern (D) this(const ref Loc loc, Identifier ident, Expression identExp, Dsymbols* members, bool mangleOnly)
+        extern (D) this(const ref Loc loc, Identifier ident, Expression identExp, Dsymbols* members)
         {
             super(ident);
             this.loc = loc;
             this.members = members;
             this.identExp = identExp;
-            this.mangleOnly = mangleOnly;
         }
 
         override void accept(Visitor v)
@@ -1304,6 +1298,28 @@ struct ASTBase
         {
             super(decl);
             cppmangle = p;
+        }
+
+        override void accept(Visitor v)
+        {
+            v.visit(this);
+        }
+    }
+
+    extern (C++) final class CPPNamespaceDeclaration : AttribDeclaration
+    {
+        Expression exp;
+
+        extern (D) this(Identifier ident, Dsymbols* decl)
+        {
+            super(decl);
+            this.ident = ident;
+        }
+
+        extern (D) this(Expression exp, Dsymbols* decl)
+        {
+            super(decl);
+            this.exp = exp;
         }
 
         override void accept(Visitor v)
@@ -4411,13 +4427,13 @@ struct ASTBase
                 break;
 
             case Tpointer:
+                if (Target.ptrsize == 8)
+                    goto case Tuns64;
                 if (Target.ptrsize == 4)
-                    value = cast(d_uns32)value;
-                else if (Target.ptrsize == 8)
-                    value = cast(d_uns64)value;
-                else
-                    assert(0);
-                break;
+                    goto case Tuns32;
+                if (Target.ptrsize == 2)
+                    goto case Tuns16;
+                assert(0);
 
             default:
                 break;
@@ -5874,7 +5890,7 @@ struct ASTBase
         }
     }
 
-    extern (C++) class TemplateParameter
+    extern (C++) class TemplateParameter : ASTNode
     {
         Loc loc;
         Identifier ident;
@@ -5885,9 +5901,9 @@ struct ASTBase
             this.ident = ident;
         }
 
-        abstract TemplateParameter syntaxCopy(){ return null;}
+        TemplateParameter syntaxCopy(){ return null;}
 
-        void accept(Visitor v)
+        override void accept(Visitor v)
         {
             v.visit(this);
         }

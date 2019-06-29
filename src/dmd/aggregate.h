@@ -95,6 +95,7 @@ public:
      */
     Dsymbol *enclosing;
     VarDeclaration *vthis;      // 'this' parameter if this aggregate is nested
+    VarDeclaration *vthis2;     // 'this' parameter if this aggregate is a template and is nested
     // Special member functions
     FuncDeclarations invs;              // Array of invariants
     FuncDeclaration *inv;               // invariant
@@ -121,6 +122,7 @@ public:
     virtual Scope *newScope(Scope *sc);
     void setScope(Scope *sc);
     bool determineFields();
+    size_t nonHiddenFields();
     bool determineSize(Loc loc);
     virtual void finalizeSize() = 0;
     d_uns64 size(const Loc &loc);
@@ -128,7 +130,6 @@ public:
     Type *getType();
     bool isDeprecated() const;         // is aggregate deprecated?
     bool isNested() const;
-    void makeNested();
     bool isExport() const;
     Dsymbol *searchCtor();
 
@@ -220,11 +221,7 @@ struct BaseClass
     DArray<BaseClass> baseInterfaces;   // if BaseClass is an interface, these
                                         // are a copy of the InterfaceDeclaration::interfaces
 
-    BaseClass();
-    BaseClass(Type *type);
-
     bool fillVtbl(ClassDeclaration *cd, FuncDeclarations *vtbl, int newinstance);
-    void copyBaseInterfaces(BaseClasses *);
 };
 
 struct ClassFlags

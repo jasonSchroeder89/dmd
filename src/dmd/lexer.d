@@ -223,6 +223,7 @@ class Lexer
         bool doDocComment;      // collect doc comment information
         bool anyToken;          // seen at least one token
         bool commentToken;      // comments are TOK.comment's
+        int inTokenStringConstant; // can be larger than 1 when in nested q{} strings
         int lastDocLine;        // last line of previous doc comment
 
         DiagnosticReporter diagnosticReporter;
@@ -264,6 +265,7 @@ class Lexer
         line = p;
         this.doDocComment = doDocComment;
         this.commentToken = commentToken;
+        this.inTokenStringConstant = 0;
         this.lastDocLine = 0;
         //initKeywords();
         /* If first line starts with '#!', ignore the line
@@ -1635,6 +1637,8 @@ class Lexer
         uint nest = 1;
         const start = loc();
         const pstart = ++p;
+        inTokenStringConstant++;
+        scope(exit) inTokenStringConstant--;
         while (1)
         {
             Token tok;
@@ -1943,6 +1947,10 @@ class Lexer
                 if (p[1] == '.')
                     goto Ldone; // if ".."
                 if (base == 10 && (isalpha(p[1]) || p[1] == '_' || p[1] & 0x80))
+                    goto Ldone; // if ".identifier" or ".unicode"
+                if (base == 16 && (!ishex(p[1]) || p[1] == '_' || p[1] & 0x80))
+                    goto Ldone; // if ".identifier" or ".unicode"
+                if (base == 2)
                     goto Ldone; // if ".identifier" or ".unicode"
                 goto Lreal; // otherwise as part of a floating point literal
             case 'p':
@@ -2380,9 +2388,12 @@ class Lexer
             case 0x1A:
             case '\n':
             Lnewline:
-                this.scanloc.linnum = linnum;
-                if (filespec)
-                    this.scanloc.filename = filespec;
+                if (!inTokenStringConstant)
+                {
+                    this.scanloc.linnum = linnum;
+                    if (filespec)
+                        this.scanloc.filename = filespec;
+                }
                 return;
             case '\r':
                 p++;

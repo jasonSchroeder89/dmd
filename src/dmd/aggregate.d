@@ -134,12 +134,12 @@ extern (C++) abstract class AggregateDeclaration : ScopeDsymbol
         auto sc2 = sc.push(this);
         sc2.stc &= STC.safe | STC.trusted | STC.system;
         sc2.parent = this;
-        if (isUnionDeclaration())
-            sc2.inunion = true;
+        sc2.inunion = isUnionDeclaration();
         sc2.protection = Prot(Prot.Kind.public_);
         sc2.explicitProtection = 0;
         sc2.aligndecl = null;
         sc2.userAttribDecl = null;
+        sc2.namespace = null;
         return sc2;
     }
 
@@ -637,7 +637,7 @@ extern (C++) abstract class AggregateDeclaration : ScopeDsymbol
 
     /* Append vthis field (this.tupleof[$-1]) to make this aggregate type nested.
      */
-    final void makeNested()
+    extern (D) final void makeNested()
     {
         if (enclosing) // if already nested
             return;
@@ -710,7 +710,7 @@ extern (C++) abstract class AggregateDeclaration : ScopeDsymbol
 
     /* Append vthis2 field (this.tupleof[$-1]) to add a second context pointer.
      */
-    final void makeNested2()
+    extern (D) final void makeNested2()
     {
         if (vthis2)
             return;

@@ -257,9 +257,6 @@ public:
     bool canTakeAddressOf();
     bool needsScopeDtor();
     bool enclosesLifetimeOf(VarDeclaration *v) const;
-    Expression *callScopeDtor(Scope *sc);
-    Expression *getConstInitializer(bool needFullType = true);
-    Expression *expandInitializer(Loc loc);
     void checkCtorConstInit();
     Dsymbol *toAlias();
     // Eliminate need for dynamic_cast
@@ -461,6 +458,7 @@ public:
     struct HiddenParameters
     {
         VarDeclaration *this_;
+        bool isThis2;
         VarDeclaration *selector;
     };
 
@@ -486,6 +484,7 @@ public:
     // scopes from having the same name
     DsymbolTable *localsymtab;
     VarDeclaration *vthis;              // 'this' parameter (member and nested)
+    bool isThis2;                       // has a dual-context 'this' parameter
     VarDeclaration *v_arguments;        // '_arguments' parameter
     ObjcSelector *selector;             // Objective-C method selector (member function only)
     VarDeclaration *selectorParameter;  // Objective-C implicit selector parameter
@@ -561,17 +560,12 @@ public:
     Dsymbol *syntaxCopy(Dsymbol *);
     bool functionSemantic();
     bool functionSemantic3();
-    // called from semantic3
-    HiddenParameters declareThis(Scope *sc, AggregateDeclaration *ad);
     bool equals(RootObject *o);
 
     int overrides(FuncDeclaration *fd);
     int findVtblIndex(Dsymbols *vtbl, int dim, bool fix17349 = true);
     BaseClass *overrideInterface();
     bool overloadInsert(Dsymbol *s);
-    FuncDeclaration *overloadExactMatch(Type *t);
-    FuncDeclaration *overloadModMatch(const Loc &loc, Type *tthis, bool &hasOverloads);
-    TemplateDeclaration *findTemplateDeclRoot();
     bool inUnittest();
     MATCH leastAsSpecialized(FuncDeclaration *g);
     LabelDsymbol *searchLabel(Identifier *ident);
@@ -590,19 +584,13 @@ public:
     bool isAbstract();
     PURE isPure();
     PURE isPureBypassingInference();
-    bool setImpure();
     bool isSafe();
     bool isSafeBypassingInference();
     bool isTrusted();
-    bool setUnsafe();
 
     bool isNogc();
     bool isNogcBypassingInference();
-    bool setGC();
 
-    void printGCUsage(const Loc &loc, const char *warn);
-    bool isolateReturn();
-    bool parametersIntersect(Type *t);
     virtual bool isNested() const;
     AggregateDeclaration *isThis();
     bool needThis();
@@ -615,9 +603,6 @@ public:
     bool isUnique();
     bool needsClosure();
     bool hasNestedFrameRefs();
-    void buildResultVar(Scope *sc, Type *tret);
-    Statement *mergeFrequire(Statement *, Expressions *);
-    Statement *mergeFensure(Statement *, Identifier *oid, Expressions *);
     ParameterList getParameterList();
 
     static FuncDeclaration *genCfunc(Parameters *args, Type *treturn, const char *name, StorageClass stc=0);

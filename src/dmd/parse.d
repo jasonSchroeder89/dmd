@@ -950,7 +950,10 @@ final class Parser(AST) : Lexer
                                 a = new AST.Dsymbols();
                                 a.push(s);
                             }
-                            s = new AST.Nspace(linkLoc, id, null, a, cppMangleOnly);
+                            if (cppMangleOnly)
+                                s = new AST.CPPNamespaceDeclaration(id, a);
+                            else
+                                s = new AST.Nspace(linkLoc, id, null, a);
                         }
                         pAttrs.link = LINK.default_;
                     }
@@ -966,7 +969,10 @@ final class Parser(AST) : Lexer
                                 a = new AST.Dsymbols();
                                 a.push(s);
                             }
-                            s = new AST.Nspace(linkLoc, null, exp, a, cppMangleOnly);
+                            if (cppMangleOnly)
+                                s = new AST.CPPNamespaceDeclaration(exp, a);
+                            else
+                                s = new AST.Nspace(linkLoc, null, exp, a);
                         }
                         pAttrs.link = LINK.default_;
                     }
@@ -2841,6 +2847,8 @@ final class Parser(AST) : Lexer
                 switch (token.value)
                 {
                 case TOK.rightParentheses:
+                    if (storageClass != 0 || udas !is null)
+                        error("basic type expected, not `)`");
                     break;
 
                 case TOK.dotDotDot:
